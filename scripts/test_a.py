@@ -50,10 +50,10 @@ deposit.get_all_compact_udts()
 dr = deposit.get_data_record("udt1__usa_mc_lane_research_laboratories__imaging_flow_cytobot__ifcb014__1389918866__2176")
 
 import cv2
-im = cv2.imread("testdata/D20140117T003426_IFCB014_02177.jpeg")
-cv2.imshow("From JPEG", im)
+#im = cv2.imread("testdata/D20140117T003426_IFCB014_02177.jpeg")
+#cv2.imshow("From JPEG", im)
 
 gray_image = cv2.cvtColor(dr.data, cv2.COLOR_GRAY2BGR)
-cv2.imshow("From Parquet", gray_image)
+#cv2.imshow("From Parquet", gray_image)
 
-cv2.waitKey(10000)
+#cv2.waitKey(10000)

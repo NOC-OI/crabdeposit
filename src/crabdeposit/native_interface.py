@@ -28,75 +28,17 @@ import csv
 import json
 import numpy
 import struct
-import hashlib
 import pyarrow
-import pyarrow.parquet as pyarrow_parquet
+import pyarrow.parquet
+import pyarrow.compute
 from datetime import datetime
-
-def binary_udt(big_udt):
-    vdp = None
-    did = None
-    ts = None
-    imid = None
-    if isinstance(big_udt, (bytes, bytearray)):
-        return big_udt
-    if big_udt.startswith("udt1__"):
-        udt_cmps = big_udt[6:].split("__")
-        vendor = udt_cmps[0]
-        device = udt_cmps[1]
-        vdp = hashlib.sha256((vendor + "__" + device).encode("utf-8")).digest()[0:6]
-        device_id = udt_cmps[2].lower()
-        did = hashlib.sha256((device_id).encode("utf-8")).digest()[0:8]
-        timestamp = int(udt_cmps[3])
-        ts = struct.pack(">Q", timestamp)[2:8]
-        if len(udt_cmps) > 4:
-            imid = hashlib.sha256((udt_cmps[4]).encode("utf-8")).digest()[0:8]
-    elif big_udt.startswith("udt1_"):
-        udt_cmps = big_udt[5:].split("_")
-        vdp = bytes.fromhex(udt_cmps[0])
-        did = bytes.fromhex(udt_cmps[1])
-        ts = bytes.fromhex(udt_cmps[2])
-        if len(udt_cmps) > 3:
-            imid = bytes.fromhex(udt_cmps[3])
-    else:
-        return udt
-    if imid is None:
-        return b'\x02' + vdp + did + ts
-    else:
-        return b'\x03' + vdp + did + ts + imid
-
-def small_udt(big_udt):
-    if isinstance(big_udt, (bytes, bytearray)):
-        if big_udt[0] == 2:
-            return big_udt
-        elif big_udt[0] == 3:
-            vdp = big_udt[1:7]
-            did = big_udt[7:15]
-            ts = big_udt[15:21]
-            return b'\x02' + vdp + did + ts
-        else:
-            raise RuntimeError("Unrecognised Binary UDT")
-    elif big_udt.startswith("udt1__"):
-        udt_cmps = big_udt[6:].split("__")
-        vendor = udt_cmps[0]
-        device = udt_cmps[1]
-        vdp = hashlib.sha256((vendor + "__" + device).encode("utf-8")).hexdigest()[0:12]
-        device_id = udt_cmps[2].lower()
-        did = hashlib.sha256((device_id).encode("utf-8")).hexdigest()[0:16]
-        timestamp = int(udt_cmps[3])
-        ts = '{:012x}'.format(timestamp)
-        small_udt = "udt1_" + vdp + "_" + did + "_" + ts
-        if len(udt_cmps) > 4:
-            imid = udt_cmps[4]
-            small_udt = small_udt + "_" + hashlib.sha256((imid).encode("utf-8")).hexdigest()[0:16]
-        return small_udt
-    else:
-        return big_udt
+from .udt import string_udt, binary_udt, small_udt
 
 class Deposit:
     def __init__(self):
         self.__parquet_uris = []
         self.__parquet_files = []
+        self.__parquet_dtypes = []
         self.__data_indicies = []
         self.__roi_indicies = []
         self.__annotation_indicies = []
@@ -105,8 +47,8 @@ class Deposit:
     def set_deposit_files(self, parquet_uris):
         self.__parquet_uris = parquet_uris
         for pfi, parquet_uri in enumerate(self.__parquet_uris):
-            pfo = pyarrow_parquet.ParquetFile(parquet_uri)
-            self.__parquet_files.append(pfo)
+            pfo = pyarrow.parquet.ParquetFile(parquet_uri)
+
             #print(pfo.metadata.metadata)
             if pfo.metadata.metadata[b"data_type"] == b"CRAB_DATA_V1":
                 self.__data_indicies.append(pfi)
@@ -117,6 +59,10 @@ class Deposit:
             else:
                 raise RuntimeError("Unrecognised CRAB deposit file")
 
+            self.__parquet_files.append(pfo)
+            #print(pfo.metadata.metadata[b"numerical_format"].decode("utf-8"))
+            self.__parquet_dtypes.append(numpy.dtype(pfo.metadata.metadata[b"numerical_format"].decode("utf-8")))
+
             pf_udts_str = pfo.metadata.metadata[b"contains_udts"]
             pf_udts = [pf_udts_str[i:i+21] for i in range(0, len(pf_udts_str), 21)]
             for pf_udt in pf_udts:
@@ -125,7 +71,7 @@ class Deposit:
                 self.__udt_map[pf_udt].append(pfi)
 
     def get_all_compact_udts(self):
-        return self.__udt_map.keys()
+        return list(map(string_udt, self.__udt_map.keys()))
 
     def get_referencing_indicies(self, udt):
         sbudt = small_udt(binary_udt(udt))
@@ -146,37 +92,42 @@ class Deposit:
         for pfi in try_pfis:
             if pfi in self.__data_indicies:
                 pfo = self.__parquet_files[pfi]
+                dtype = self.__parquet_dtypes[pfi]
                 for row_group in range(pfo.num_row_groups):
                     rgt = pfo.read_row_group(row_group)
                     filtered_rgt = rgt.filter(pyarrow.compute.equal(rgt["udt_bin"], budt))
                     filtered_rgt = filtered_rgt.to_pylist(maps_as_pydicts="strict")
                     for matched_record_def in filtered_rgt:
                         if (not full_string_match) or (matched_record_def["udt"] == udt): # Optional check for full string match
-                            numerical_format = pfo.metadata.metadata[b"numerical_format"]
-                            dtype = numpy.uint8
-                            if numerical_format == "uint16":
-                                dtype = numpy.uint16
-                            elif numerical_format == "uint32":
-                                dtype = numpy.uint32
-                            elif numerical_format == "uint64":
-                                dtype = numpy.uint64
-                            elif numerical_format == "float16":
-                                dtype = numpy.float16
-                            elif numerical_format == "float32":
-                                dtype = numpy.float32
-                            elif numerical_format == "float64":
-                                dtype = numpy.float64
-                            elif numerical_format == "float128":
-                                dtype = numpy.float128
-                            elif numerical_format == "complex64":
-                                dtype = numpy.complext64
-                            elif numerical_format == "complex128":
-                                dtype = numpy.complex128
-                            elif numerical_format == "complex256":
-                                dtype = numpy.complex256
                             numpy_array = numpy.frombuffer(matched_record_def["data"], dtype=dtype)
                             numpy_array = numpy.reshape(numpy_array, shape=matched_record_def["extents"], order="C")
                             return DataRecord(matched_record_def["udt"], numpy_array, matched_record_def["last_modified"])
+
+    def get_data_records(self, udt, full_string_match=False):
+        budt = binary_udt(udt)
+        if full_string_match:
+            if budt == udt:
+                raise RuntimeError("Cannot use input binary UDT with full_string_match option")
+        records = []
+        #print(string_udt(budt))
+        tbudt = bytes([(1 | budt[0])]) + budt[1:] # When doing a literal match, we explicitly want to match for binary UDTs matching the extended form too, so we mangle the search string here
+        #print(tbudt)
+        #print(budt)
+        try_pfis = self.get_referencing_indicies(budt)
+        for pfi in try_pfis:
+            if pfi in self.__data_indicies:
+                pfo = self.__parquet_files[pfi]
+                dtype = self.__parquet_dtypes[pfi]
+                for row_group in range(pfo.num_row_groups):
+                    rgt = pfo.read_row_group(row_group)
+                    filtered_rgt = rgt.filter(pyarrow.compute.or_(pyarrow.compute.starts_with(rgt["udt_bin"], tbudt), pyarrow.compute.equal(rgt["udt_bin"], budt)))
+                    filtered_rgt = filtered_rgt.to_pylist(maps_as_pydicts="strict")
+                    for matched_record_def in filtered_rgt:
+                        if (not full_string_match) or (matched_record_def["udt"].startswith(udt)): # Optional check for full string match
+                            numpy_array = numpy.frombuffer(matched_record_def["data"], dtype=dtype)
+                            numpy_array = numpy.reshape(numpy_array, shape=matched_record_def["extents"], order="C")
+                            records.append(DataRecord(matched_record_def["udt"], numpy_array, matched_record_def["last_modified"]))
+        return records
 
     def __get_coherence(self):
         return False
@@ -209,6 +160,8 @@ class DepositBuilder:
         self.__annotation_provider = iter([])
         self.__domain_types = []
         self.__dataset_compact_udts = None
+        self.__bit_depth = None
+        self.__data_type = None
         self.__data_out_uri = "crabdata.parquet"
 
     def set_data_provider(self, iterable):
@@ -223,6 +176,14 @@ class DepositBuilder:
         self.__dataset_compact_udts = udts
         return self
 
+    def set_bit_depth(self, bit_depth):
+        self.__bit_depth = bit_depth
+        return self
+
+    def set_bit_data_type(self, dtype):
+        self.__data_type = dtype
+        return self
+
     def add_udt(self, udt):
         if self.__dataset_compact_udts is None:
             self.__dataset_compact_udts = []
@@ -230,8 +191,20 @@ class DepositBuilder:
         return self
 
     def build(self):
-        data_bit_depth = 8
-        data_stored_bit_depth = 8
+        try:
+            record = next(self.__data_provider)
+        except StopIteration:
+            raise StopIteration("Cannot operate on an empty data provider")
+        fst_pull = True
+
+        if self.__data_type == None:
+            self.__data_type = str(record.data.dtype)
+        if self.__bit_depth == None:
+            dtype_numbers = re.findall(r'\d+', self.__data_type)
+            self.__bit_depth = int(dtype_numbers[0])
+
+        pa_dtype = pyarrow.from_numpy_dtype(numpy.dtype(self.__data_type))
+
         data_size_approx_kb = 32
         data_batch_size = int(65536 / data_size_approx_kb) # Targeting batch size of ~ 64mb assuming a per-record size of about 32kb
 
@@ -242,7 +215,7 @@ class DepositBuilder:
             ("udt_bin", pyarrow.binary()),
             ("data", pyarrow.binary())
         ])
-        data_parquet_writer = pyarrow_parquet.ParquetWriter(self.__data_out_uri, data_schema)
+        data_parquet_writer = pyarrow.parquet.ParquetWriter(self.__data_out_uri, data_schema)
         exhausted = False
 
         build_stats = False
@@ -258,7 +231,10 @@ class DepositBuilder:
             data_batch_extents = []
             try:
                 for i in range(data_batch_size):
-                    record = next(self.__data_provider)
+                    if fst_pull:
+                        fst_pull = False
+                    else:
+                        record = next(self.__data_provider)
                     data_batch_udt.append(record.udt)
                     data_batch_udt_bin.append(record.bin_udt)
                     if build_stats:
@@ -282,8 +258,8 @@ class DepositBuilder:
                 "data_type": "CRAB_DATA_V1",
                 "last_modified": struct.pack("<Q", int(datetime.utcnow().timestamp())),
                 "domain_types": json.dumps(self.__domain_types),
-                "bit_depth": struct.pack("<Q", data_bit_depth),
-                "numerical_format": "uint64",
+                "bit_depth": struct.pack("<Q", self.__bit_depth),
+                "numerical_format": self.__data_type,
                 "contains_udts": b"".join(self.__dataset_compact_udts),
             }
         data_parquet_writer.add_key_value_metadata(data_metadata)

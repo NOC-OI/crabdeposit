@@ -9,4 +9,5 @@ rm dist/*
 rm testout/*
 python3 -m build
 pip install --force-reinstall --no-deps dist/crabdeposit*.whl
-python3 scripts/test.py
+python3 scripts/test_a.py
+python3 scripts/test_b.py
