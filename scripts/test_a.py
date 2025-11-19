@@ -31,6 +31,7 @@ class IFCBDataProvider:
             if self.index >= len(self.roi_readers[self.reader_index].rois):
                 if self.reader_index < (len(self.roi_readers) - 1):
                     self.reader_index += 1
+                    self.index = 0
             dt = datetime.strptime(self.ifcb_ids[self.reader_index].split("_")[0], "D%Y%m%dT%H%M%S").replace(tzinfo=pytz.UTC)
             observation_id = self.ifcb_ids[self.reader_index] + "_" + str(roi.index).zfill(5)
             data_record = DataRecord(ifcb_id_to_udt(observation_id), roi.array, dt)
@@ -41,19 +42,33 @@ class IFCBDataProvider:
 roi_readers = [ROIReader("testdata/D20140117T003426_IFCB014.hdr", "testdata/D20140117T003426_IFCB014.adc", "testdata/D20140117T003426_IFCB014.roi")]
 ifcb_ids = ["D20140117T003426_IFCB014"]
 data_provider = IFCBDataProvider(roi_readers, ifcb_ids)
-
-DepositBuilder().set_data_provider(data_provider).set_export_uri("testout/crabdep.parquet").build()
+DepositBuilder().set_data_provider(data_provider).set_export_uri("testout/D20140117T003426_IFCB014.parquet").build()
 
 deposit = Deposit()
-deposit.set_deposit_files(["testout/crabdep.parquet"])
+deposit.set_deposit_files(["testout/D20140117T003426_IFCB014.parquet"])
 deposit.get_all_compact_udts()
 dr = deposit.get_data_record("udt1__usa_mc_lane_research_laboratories__imaging_flow_cytobot__ifcb014__1389918866__2176")
 
 import cv2
 #im = cv2.imread("testdata/D20140117T003426_IFCB014_02177.jpeg")
 #cv2.imshow("From JPEG", im)
-
 gray_image = cv2.cvtColor(dr.data, cv2.COLOR_GRAY2BGR)
 #cv2.imshow("From Parquet", gray_image)
-
 #cv2.waitKey(10000)
+
+ifcb_bins = [
+        "D20250530T000150_IFCB225",
+        "D20250530T002259_IFCB225",
+        "D20250530T004408_IFCB225",
+        "D20250530T010516_IFCB225",
+        "D20250530T061017_IFCB225"
+    ]
+roi_readers = []
+for ifcb_bin in ifcb_bins:
+    roi_readers.append(ROIReader("testdata/" + ifcb_bin + ".hdr", "testdata/" + ifcb_bin + ".adc", "testdata/" + ifcb_bin + ".roi"))
+data_provider = IFCBDataProvider(roi_readers, ifcb_bins)
+DepositBuilder().set_data_provider(data_provider).set_export_uri("testout/D20250530.parquet").build()
+
+deposit_2025 = Deposit()
+deposit_2025.set_deposit_files(["testout/D20250530.parquet"])
+print(deposit_2025.get_all_compact_udts())

@@ -4,11 +4,11 @@ from datetime import datetime
 import pytz
 import time
 
-
+print("Test B")
 
 ts1 = time.time()
 deposit = Deposit()
-deposit.set_deposit_files(["testout/crabdep.parquet"])
+deposit.set_deposit_files(["testout/D20140117T003426_IFCB014.parquet"])
 print(deposit.get_all_compact_udts())
 ts2 = time.time()
 dr = deposit.get_data_record("udt1__usa_mc_lane_research_laboratories__imaging_flow_cytobot__ifcb014__1389918866__2176")

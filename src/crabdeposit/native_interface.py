@@ -153,6 +153,13 @@ class DataRecord:
             self.bin_compact_udt = small_udt(self.bin_udt)
 
 
+class ROIRecord:
+    pass
+
+class AnnotationRecord:
+    pass
+
+
 class DepositBuilder:
     def __init__(self):
         self.__data_provider = iter([])
@@ -206,7 +213,9 @@ class DepositBuilder:
         pa_dtype = pyarrow.from_numpy_dtype(numpy.dtype(self.__data_type))
 
         data_size_approx_kb = 32
+        batch_num = 0
         data_batch_size = int(65536 / data_size_approx_kb) # Targeting batch size of ~ 64mb assuming a per-record size of about 32kb
+        #data_batch_size = 256
 
         data_schema = pyarrow.schema([
             ("udt", pyarrow.string()),
@@ -242,6 +251,7 @@ class DepositBuilder:
                     data_batch_data.append(record.data.tobytes(order="C"))
                     data_batch_last_modified.append(record.last_modified)
                     data_batch_extents.append(pyarrow.array(list(record.data.shape), type=pyarrow.uint64()))
+
             except StopIteration:
                 exhausted = True
 
@@ -253,6 +263,8 @@ class DepositBuilder:
                 "extents": data_batch_extents
                 }, schema=data_schema)
             data_parquet_writer.write_batch(data_batch)
+            batch_num += 1
+            #print("Writing " + str(len(data_batch_udt)) + " records to batch " + str(batch_num))
 
         data_metadata = {
                 "data_type": "CRAB_DATA_V1",

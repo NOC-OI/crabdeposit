@@ -2,7 +2,7 @@
 SCRIPT_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
 cd $SCRIPT_DIR
 cd ..
-bash scripts/get-test-data.sh
+#bash scripts/get-test-data.sh
 mkdir -p dist
 mkdir -p testout
 rm dist/*
