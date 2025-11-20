@@ -1,4 +1,4 @@
-from crabdeposit import DepositBuilder, DataRecord, Deposit
+from crabdeposit import DepositBuilder, DataRecord, ROIRecord, AnnotationRecord, Deposit
 from libifcb import ROIReader
 import json
 from datetime import datetime
@@ -34,25 +34,50 @@ class IFCBDataProvider:
                     self.index = 0
             dt = datetime.strptime(self.ifcb_ids[self.reader_index].split("_")[0], "D%Y%m%dT%H%M%S").replace(tzinfo=pytz.UTC)
             observation_id = self.ifcb_ids[self.reader_index] + "_" + str(roi.index).zfill(5)
-            data_record = DataRecord(ifcb_id_to_udt(observation_id), roi.array, dt)
+
+            data_record = DataRecord(
+                                udt = ifcb_id_to_udt(observation_id),
+                                data = roi.array,
+                                last_modified = dt,
+                                domain_types = ["spatial 3.5714285714285716e-07 m", "spatial 3.5714285714285716e-07 m"],
+                                bit_depth = 8
+                            )
+
+            #DataRecord(, , dt)
+
             return data_record
         raise StopIteration
 
+class IFCBROIProvider:
+    def __init__(self, roi_readers, ifcb_ids):
+        self.roi_readers = roi_readers
+        self.ifcb_ids = ifcb_ids
+        self.reader_index = 0
+        self.index = 0
 
-roi_readers = [ROIReader("testdata/D20140117T003426_IFCB014.hdr", "testdata/D20140117T003426_IFCB014.adc", "testdata/D20140117T003426_IFCB014.roi")]
-ifcb_ids = ["D20140117T003426_IFCB014"]
-data_provider = IFCBDataProvider(roi_readers, ifcb_ids)
-DepositBuilder().set_data_provider(data_provider).set_export_uri("testout/D20140117T003426_IFCB014.parquet").build()
+    def __iter__(self):
+        return self
 
-deposit = Deposit()
-deposit.set_deposit_files(["testout/D20140117T003426_IFCB014.parquet"])
-deposit.get_all_compact_udts()
-dr = deposit.get_data_record("udt1__usa_mc_lane_research_laboratories__imaging_flow_cytobot__ifcb014__1389918866__2176")
+    def __next__(self):
+        if self.index < len(self.roi_readers[self.reader_index].rois):
+            roi = self.roi_readers[self.reader_index].rois[self.index]
+            self.index += 1
+            if self.index >= len(self.roi_readers[self.reader_index].rois):
+                if self.reader_index < (len(self.roi_readers) - 1):
+                    self.reader_index += 1
+                    self.index = 0
+            dt = datetime.strptime(self.ifcb_ids[self.reader_index].split("_")[0], "D%Y%m%dT%H%M%S").replace(tzinfo=pytz.UTC)
+            observation_id = self.ifcb_ids[self.reader_index] + "_" + str(roi.index).zfill(5)
+            roi_record = ROIRecord(ifcb_id_to_udt(observation_id), dt, extents, uuid.uuid4(), annotator = None, annotation_software = "https://github.com/NOC-OI/ifcbproc")
+            return roi_record
+        raise StopIteration
 
-import cv2
+print("==================[ Test A ]==================")
+
+#import cv2
 #im = cv2.imread("testdata/D20140117T003426_IFCB014_02177.jpeg")
 #cv2.imshow("From JPEG", im)
-gray_image = cv2.cvtColor(dr.data, cv2.COLOR_GRAY2BGR)
+#gray_image = cv2.cvtColor(dr.data, cv2.COLOR_GRAY2BGR)
 #cv2.imshow("From Parquet", gray_image)
 #cv2.waitKey(10000)
 
@@ -71,4 +96,5 @@ DepositBuilder().set_data_provider(data_provider).set_export_uri("testout/D20250
 
 deposit_2025 = Deposit()
 deposit_2025.set_deposit_files(["testout/D20250530.parquet"])
-print(deposit_2025.get_all_compact_udts())
+#print(deposit_2025.get_all_compact_udts())
+print("Generated data deposit file!")

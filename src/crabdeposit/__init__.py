@@ -1,1 +1,1 @@
-from .native_interface import DepositBuilder, Deposit, DataRecord
+from .native_interface import DepositBuilder, Deposit, DataRecord, ROIRecord, AnnotationRecord
