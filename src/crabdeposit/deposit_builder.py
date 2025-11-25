@@ -30,25 +30,34 @@ import pyarrow.parquet
 import pyarrow.compute
 from datetime import datetime
 from .udt import string_udt, binary_udt, small_udt
-from .records import DataRecord, ROIRecord, AnnotationRecord
+from .records import DataRecord, AnnotationRecord
+from .deposit import Deposit
 
 class DepositBuilder:
     def __init__(self):
         self.__data_provider = iter([])
-        self.__roi_provider = iter([])
         self.__annotation_provider = iter([])
         self.__domain_types = []
         self.__dataset_compact_udts = None
         self.__data_out_uri = "crabdata.parquet"
-        self.__roi_out_uri = "crabroi.parquet"
         self.__annotation_out_uri = "crabannotation.parquet"
+        self.__custom_fields = []
+        self.__custom_discarded_fields = []
 
     def set_data_provider(self, iterable):
         self.__data_provider = iterable
         return self
 
-    def set_export_uri(self, uri):
+    def set_annotation_provider(self, iterable):
+        self.__annotation_provider = iterable
+        return self
+
+    def set_data_export_uri(self, uri):
         self.__data_out_uri = uri
+        return self
+
+    def set_annotation_export_uri(self, uri):
+        self.__annotation_out_uri = uri
         return self
 
     def set_compact_binary_udts(self, udts):
@@ -69,7 +78,28 @@ class DepositBuilder:
         self.__dataset_compact_udts.append(small_udt(binary_udt(udt)))
         return self
 
+    def register_field(self, field_name, dtype = float):
+        self.__custom_fields.append((field_name, pyarrow.from_numpy_dtype(dtype)))
+        return self
+
+    def register_fields(self, field_names, dtype = float):
+        for field_name in field_names:
+            self.register_field(field_name, dtype)
+        return self
+
+    def register_discard_field(self, field_name):
+        self.__custom_discarded_fields.append(field_name)
+        return self
+
     def build(self):
+        build_stats = False
+        if self.__dataset_compact_udts is None:
+            self.__dataset_compact_udts = set()
+            build_stats = True
+
+        data_parquet_writer = None
+        annotation_parquet_writer = None
+
         try:
             record = next(self.__data_provider)
 
@@ -89,17 +119,13 @@ class DepositBuilder:
                 ("mime_type", pyarrow.string()),
                 ("numerical_format", pyarrow.string()),
                 ("domain_types", pyarrow.string()),
+                ("value_domain", pyarrow.string()),
                 ("bit_depth", pyarrow.uint64()),
                 ("last_modified", pyarrow.timestamp('s', tz='UTC')),
                 ("extents", pyarrow.list_(pyarrow.uint64())),
             ])
             data_parquet_writer = pyarrow.parquet.ParquetWriter(self.__data_out_uri, data_schema)
             exhausted = False
-
-            build_stats = False
-            if self.__dataset_compact_udts is None:
-                self.__dataset_compact_udts = set()
-                build_stats = True
 
             while not exhausted:
                 data_batch_udt = []
@@ -112,6 +138,7 @@ class DepositBuilder:
                 data_batch_numerical_format = []
                 data_batch_domain_types = []
                 data_batch_bit_depth = []
+                data_batch_value_domain = []
 
                 data_batch_last_modified = []
                 data_batch_extents = []
@@ -137,6 +164,7 @@ class DepositBuilder:
                         data_batch_numerical_format.append(record.numerical_format)
                         data_batch_domain_types.append(json.dumps(record.domain_types))
                         data_batch_bit_depth.append(record.bit_depth)
+                        data_batch_value_domain.append(record.value_domain)
 
                         data_batch_last_modified.append(record.last_modified)
                         data_batch_extents.append(pyarrow.array(record.extents, type=pyarrow.uint64()))
@@ -154,102 +182,136 @@ class DepositBuilder:
                     "numerical_format": data_batch_numerical_format,
                     "domain_types": data_batch_domain_types,
                     "bit_depth": data_batch_bit_depth,
+                    "value_domain": data_batch_value_domain,
                     "last_modified": data_batch_last_modified,
                     "extents": data_batch_extents
                     }, schema=data_schema)
                 data_parquet_writer.write_batch(data_batch)
                 batch_num += 1
                 #print("Writing " + str(len(data_batch_udt)) + " records to batch " + str(batch_num))
-
-
-                #"domain_types": json.dumps(self.__domain_types),
-                #"bit_depth": struct.pack("<Q", self.__bit_depth),
-                #"numerical_format": self.__data_type,
-
-            data_metadata = {
-                    "data_type": "CRAB_DATA_V1",
-                    "last_modified": struct.pack("<Q", int(datetime.utcnow().timestamp())),
-                    "contains_udts": b"".join(self.__dataset_compact_udts),
-                }
-            data_parquet_writer.add_key_value_metadata(data_metadata)
-            data_parquet_writer.close()
         except StopIteration:
             print("No raw data!")
 
         try:
-            record = next(self.__roi_provider)
+            record = next(self.__annotation_provider)
 
             fst_pull = True
 
-            roi_size_approx_kb = 1
+            annotation_size_approx_kb = 1
             batch_num = 0
-            roi_batch_size = int(65536 / data_size_approx_kb) # Targeting batch size of ~ 64mb assuming a per-record size of about 32kb
+            annotation_batch_size = int(65536 / data_size_approx_kb) # Targeting batch size of ~ 64mb assuming a per-record size of about 32kb
             #data_batch_size = 256
 
-            roi_schema = pyarrow.schema([
+
+            pyarrow_fields = [
                 ("udt", pyarrow.string()),
                 ("udt_bin", pyarrow.binary()),
                 ("uuid", pyarrow.binary()),
+                ("sha256", pyarrow.binary()),
                 ("last_modified", pyarrow.timestamp('s', tz='UTC')),
                 ("extents", pyarrow.list_(pyarrow.uint64())),
+                ("origin_extents", pyarrow.list_(pyarrow.uint64())),
                 ("annotator", pyarrow.string()),
-                ("annotation_software", pyarrow.string())
-            ])
-            roi_parquet_writer = pyarrow.parquet.ParquetWriter(self.__roi_out_uri, roi_schema)
+                ("annotation_software", pyarrow.string()),
+                ("discard_in_favour", pyarrow.binary())
+            ]
+            for field_def in self.__custom_fields:
+                pyarrow_fields.append((("field_" + field_def[0]), field_def[1]))
+            for discard_field_def in self.__custom_discarded_fields:
+                pyarrow_fields.append((("discard_field_" + field_def[0]), pyarrow.bool_()))
+            annotation_schema = pyarrow.schema(pyarrow_fields)
+            annotation_parquet_writer = pyarrow.parquet.ParquetWriter(self.__annotation_out_uri, annotation_schema)
             exhausted = False
 
-            build_stats = False
-            if self.__roiset_compact_udts is None:
-                self.__roiset_compact_udts = set()
-                build_stats = True
-
             while not exhausted:
-                roi_batch_udt = []
-                roi_batch_udt_bin = []
-                roi_batch_uuid = []
-                roi_batch_last_modified = []
-                roi_batch_extents = []
-                roi_batch_annotator = []
-                roi_batch_annotation_software = []
+                annotation_batch_udt = []
+                annotation_batch_udt_bin = []
+                annotation_batch_uuid = []
+                annotation_batch_sha256 = []
+                annotation_batch_last_modified = []
+                annotation_batch_extents = []
+                annotation_batch_origin_extents = []
+                annotation_batch_annotator = []
+                annotation_batch_annotation_software = []
+                annotation_batch_discard_in_favour = []
+                annotation_extra_fields_dict = {}
+                for field_def in self.__custom_fields:
+                    annotation_extra_fields_dict["field_" + field_def[0]] = []
+                for discard_field_def in self.__custom_discarded_fields:
+                    annotation_extra_fields_dict["discard_field_" + discard_field_def] = []
                 try:
                     for i in range(data_batch_size):
                         if fst_pull:
                             fst_pull = False
                         else:
-                            record = next(self.__roi_provider)
-                        roi_batch_udt.append(record.udt)
-                        roi_batch_udt_bin.append(record.bin_udt)
+                            record = next(self.__annotation_provider)
+                        annotation_batch_udt.append(record.udt)
+                        annotation_batch_udt_bin.append(record.bin_udt)
                         if build_stats:
-                            self.__roiset_compact_udts.add(small_udt(record.bin_udt))
-                        roi_batch_uuid.append(uuid.UUID(record.uuid).bytes)
-                        roi_batch_last_modified.append(record.last_modified)
-                        roi_batch_extents.append(pyarrow.array(list(sum(record.extents, ())), type=pyarrow.uint64()))
-                        roi_batch_last_modified.append(record.annotator)
-                        roi_batch_last_modified.append(record.annotation_software)
+                            self.__dataset_compact_udts.add(small_udt(record.bin_udt))
+                        annotation_batch_sha256.append(record.sha256)
+                        annotation_batch_uuid.append(uuid.UUID(record.uuid).bytes)
+                        annotation_batch_last_modified.append(record.last_modified)
+                        annotation_batch_extents.append(pyarrow.array(list(sum(record.extents, ())), type=pyarrow.uint64()))
+                        annotation_batch_origin_extents.append(pyarrow.array(list(record.origin_extents), type=pyarrow.uint64()))
+                        annotation_batch_annotator.append(record.annotator)
+                        annotation_batch_annotation_software.append(record.annotation_software)
+                        annotation_batch_discard_in_favour.append(record.discard_in_favour)
+
+                        for field_def in self.__custom_fields:
+                            val = None
+                            if field_def[0] in record.field_dict.keys():
+                                val = record.field_dict[field_def[0]]
+                            annotation_extra_fields_dict["field_" + field_def[0]].append(val)
+                        for discard_field_def in self.__custom_discarded_fields:
+                            val = None
+                            if discard_field_def in record.discard_field_list:
+                                val = True
+                            annotation_extra_fields_dict["discard_field_" + discard_field_def].append(val)
                 except StopIteration:
                     exhausted = True
 
-                data_batch = pyarrow.RecordBatch.from_pydict({
-                    "udt": roi_batch_udt,
-                    "udt_bin": roi_batch_udt_bin,
-                    "uuid": roi_batch_uuid,
-                    "last_modified": data_batch_last_modified,
-                    "extents": data_batch_extents,
-                    "annotator": data_batch_annotator,
-                    "annotation_software": data_batch_annotation_software
-                    }, schema=data_schema)
-                data_parquet_writer.write_batch(data_batch)
+                annotation_batch_dict = {
+                        "udt": annotation_batch_udt,
+                        "udt_bin": annotation_batch_udt_bin,
+                        "uuid": annotation_batch_uuid,
+                        "sha256": annotation_batch_sha256,
+                        "last_modified": annotation_batch_last_modified,
+                        "extents": annotation_batch_extents,
+                        "origin_extents": annotation_batch_origin_extents,
+                        "annotator": annotation_batch_annotator,
+                        "annotation_software": annotation_batch_annotation_software,
+                        "discard_in_favour": annotation_batch_discard_in_favour
+                    }
+                for annotation_extra_field_key in annotation_extra_fields_dict.keys():
+                    annotation_batch_dict[annotation_extra_field_key] = annotation_extra_fields_dict[annotation_extra_field_key]
+                annotation_batch = pyarrow.RecordBatch.from_pydict(annotation_batch_dict, schema=annotation_schema)
+                annotation_parquet_writer.write_batch(annotation_batch)
                 batch_num += 1
                 #print("Writing " + str(len(data_batch_udt)) + " records to batch " + str(batch_num))
 
+
+        except StopIteration:
+            print("No Annotations!")
+
+        if data_parquet_writer is not None:
             data_metadata = {
-                    "data_type": "CRAB_ROI_V1",
-                    "last_modified": struct.pack("<Q", int(datetime.utcnow().timestamp())),
-                    "references_udts": b"".join(self.__roiset_compact_udts),
-                }
+                "data_type": "CRAB_DATA_V1",
+                "last_modified": struct.pack("<Q", int(datetime.utcnow().timestamp())),
+                "contains_udts": b"".join(self.__dataset_compact_udts),
+            }
             data_parquet_writer.add_key_value_metadata(data_metadata)
             data_parquet_writer.close()
-        except StopIteration:
-            print("No ROIs!")
 
-        return True
+        if annotation_parquet_writer is not None:
+            annotation_metadata = {
+                "data_type": "CRAB_ANNOTATION_V1",
+                "last_modified": struct.pack("<Q", int(datetime.utcnow().timestamp())),
+                "references_udts": b"".join(self.__dataset_compact_udts),
+            }
+            annotation_parquet_writer.add_key_value_metadata(annotation_metadata)
+            annotation_parquet_writer.close()
+
+        out_deposit = Deposit()
+        out_deposit.set_deposit_files([self.__data_out_uri, self.__annotation_out_uri])
+        return out_deposit

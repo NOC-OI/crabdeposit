@@ -30,14 +30,13 @@ import pyarrow.parquet
 import pyarrow.compute
 from datetime import datetime
 from .udt import string_udt, binary_udt, small_udt
-from .records import DataRecord, ROIRecord, AnnotationRecord
+from .records import DataRecord, AnnotationRecord
 
 class Deposit:
     def __init__(self):
         self.__parquet_uris = []
         self.__parquet_files = []
         self.__data_indicies = []
-        self.__roi_indicies = []
         self.__annotation_indicies = []
         self.__udt_map = {}
 
@@ -46,12 +45,13 @@ class Deposit:
         for pfi, parquet_uri in enumerate(self.__parquet_uris):
             pfo = pyarrow.parquet.ParquetFile(parquet_uri)
 
+            pf_udts_str = None
             #print(pfo.metadata.metadata)
             if pfo.metadata.metadata[b"data_type"] == b"CRAB_DATA_V1":
+                pf_udts_str = pfo.metadata.metadata[b"contains_udts"]
                 self.__data_indicies.append(pfi)
-            elif pfo.metadata.metadata[b"data_type"] == b"CRAB_ROI_V1":
-                self.__roi_indicies.append(pfi)
             elif pfo.metadata.metadata[b"data_type"] == b"CRAB_ANNOTATION_V1":
+                pf_udts_str = pfo.metadata.metadata[b"references_udts"]
                 self.__annotation_indicies.append(pfi)
             else:
                 raise RuntimeError("Unrecognised CRAB deposit file")
@@ -60,12 +60,12 @@ class Deposit:
             #print(pfo.metadata.metadata[b"numerical_format"].decode("utf-8"))
             #self.__parquet_dtypes.append(numpy.dtype(pfo.metadata.metadata[b"numerical_format"].decode("utf-8")))
 
-            pf_udts_str = pfo.metadata.metadata[b"contains_udts"]
-            pf_udts = [pf_udts_str[i:i+21] for i in range(0, len(pf_udts_str), 21)]
-            for pf_udt in pf_udts:
-                if not pf_udt in self.__udt_map.keys():
-                    self.__udt_map[pf_udt] = []
-                self.__udt_map[pf_udt].append(pfi)
+            if pf_udts_str is not None:
+                pf_udts = [pf_udts_str[i:i+21] for i in range(0, len(pf_udts_str), 21)]
+                for pf_udt in pf_udts:
+                    if not pf_udt in self.__udt_map.keys():
+                        self.__udt_map[pf_udt] = []
+                    self.__udt_map[pf_udt].append(pfi)
 
     def get_all_compact_udts(self):
         return list(map(string_udt, self.__udt_map.keys()))
@@ -73,10 +73,7 @@ class Deposit:
     def get_referencing_indicies(self, udt):
         sbudt = small_udt(binary_udt(udt))
         if sbudt in self.__udt_map.keys():
-            refs = []
-            for pfi in self.__udt_map[sbudt]:
-                refs.append(pfi)
-            return refs
+            return self.__udt_map[sbudt]
         else:
             return []
 
@@ -115,11 +112,58 @@ class Deposit:
                                     bin_udt = matched_record_def["udt_bin"],
                                     mime_type = matched_record_def["mime_type"],
                                     domain_types = json.loads(matched_record_def["domain_types"]),
+                                    value_domain = matched_record_def["value_domain"],
                                     numerical_format = numerical_format,
                                     bit_depth = matched_record_def["bit_depth"],
                                     extents = matched_record_def["extents"],
                                     sha256 = matched_record_def["sha256"]
                                 )
+
+    def get_annotation_records(self, udt, full_string_match=False):
+        budt = binary_udt(udt)
+        if full_string_match:
+            if budt == udt:
+                raise RuntimeError("Cannot use input binary UDT with full_string_match option")
+        try_pfis = self.get_referencing_indicies(budt)
+        annotation_records = []
+        for pfi in try_pfis:
+            if pfi in self.__annotation_indicies:
+                pfo = self.__parquet_files[pfi]
+                pfo_fields = []
+                pfo_discard_fields = []
+                for col_nm in pfo.schema.names:
+                    if col_nm.startswith("field_"):
+                        pfo_fields.append(col_nm[6:])
+                    if col_nm.startswith("discard_field_"):
+                        pfo_discard_fields.append(col_nm[14:])
+                for row_group in range(pfo.num_row_groups):
+                    rgt = pfo.read_row_group(row_group)
+                    filtered_rgt = rgt.filter(pyarrow.compute.equal(rgt["udt_bin"], budt))
+                    filtered_rgt = filtered_rgt.to_pylist(maps_as_pydicts="strict")
+                    for matched_record_def in filtered_rgt:
+                        if (not full_string_match) or (matched_record_def["udt"] == udt): # Optional check for full string match
+                            field_dict = {}
+                            discard_field_list = []
+                            for field in pfo_fields:
+                                field_dict[field] = matched_record_def["field_" + field]
+                            for discard_field in pfo_discard_fields:
+                                if matched_record_def["discard_field_" + discard_field]:
+                                    discard_field_list.append(discard_field)
+                            annotation_records.append(AnnotationRecord(
+                                    udt = matched_record_def["udt"],
+                                    last_modified = matched_record_def["last_modified"],
+                                    extents = matched_record_def["extents"],
+                                    origin_extents = matched_record_def["origin_extents"],
+                                    sha256 = matched_record_def["sha256"],
+                                    uuid = matched_record_def["uuid"],
+                                    annotator = matched_record_def["annotator"],
+                                    annotation_software = matched_record_def["annotation_software"],
+                                    bin_udt = matched_record_def["udt_bin"],
+                                    discard_in_favour = matched_record_def["discard_in_favour"],
+                                    field_dict = field_dict,
+                                    discard_field_list = discard_field_list
+                                ))
+        return annotation_records
 
     def get_prefixed_udts(self, udt_prefix, full_string_match=False):
         budt = binary_udt(udt_prefix)

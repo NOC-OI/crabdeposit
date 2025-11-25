@@ -7,11 +7,15 @@ import time
 print("==================[ Test B ]==================")
 
 deposit = Deposit()
-deposit.set_deposit_files(["testout/D20250530.parquet"])
+deposit.set_deposit_files(["testout/D20250530_data.parquet", "testout/D20250530_annotation.parquet"])
 print(deposit.get_all_compact_udts())
 
 drs = deposit.get_prefixed_udts("udt1_2dc621accf3d_c224a43f022373c2_00006838f56e")
 print("Data records found:" + str(len(drs)))
+
+annotations = deposit.get_annotation_records(drs[5])
+for annot in annotations:
+    print(annot.field_dict)
 
 import cv2
 for i in range(0,8):

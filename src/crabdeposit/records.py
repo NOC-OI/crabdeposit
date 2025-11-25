@@ -32,7 +32,7 @@ from datetime import datetime
 from .udt import string_udt, binary_udt, small_udt
 
 class DataRecord:
-    def __init__(self, udt, data, last_modified, data_uri=None, bin_udt=None, bin_compact_udt=None, mime_type=None, domain_types=None, numerical_format=None, bit_depth=None, extents=None, sha256=None):
+    def __init__(self, udt, data, last_modified, data_uri=None, bin_udt=None, bin_compact_udt=None, mime_type=None, domain_types=None, numerical_format=None, bit_depth=None, value_domain="magnitude", extents=None, sha256=None):
         self.extents = extents
         self.__byte_data = None
         self.mime_type = None
@@ -87,6 +87,7 @@ class DataRecord:
             dtype_numbers = re.findall(r'\d+', self.numerical_format)
             bit_depth = int(dtype_numbers[0])
         self.bit_depth = bit_depth
+        self.value_domain = value_domain
 
         self.__sha256 = None
         if sha256 is not None:
@@ -120,8 +121,8 @@ class DataRecord:
         else:
             raise RuntimeError("Cloud retrieval unimplemented")
 
-class ROIRecord:
-    def __init__(self, udt, last_modified, extents, uuid = None, annotator = None, annotation_software = None, bin_udt=None, bin_compact_udt=None):
+class AnnotationRecord:
+    def __init__(self, udt, last_modified, extents, origin_extents, sha256, uuid = None, annotator = None, annotation_software = None, bin_udt=None, bin_compact_udt=None, discard_in_favour=None, field_dict={}, discard_field_list=[]):
         self.udt = udt
         self.uuid = str(uuid)
         if self.uuid is None:
@@ -134,10 +135,14 @@ class ROIRecord:
         if self.bin_compact_udt is None:
             self.bin_compact_udt = small_udt(self.bin_udt)
         self.extents = extents
+        self.origin_extents = origin_extents
+        if sha256 is None:
+            raise RuntimeError("Hash is neccesary for annotations!")
+        self.sha256 = sha256
         self.annotator = annotator
         self.annotation_software = annotation_software
-
-class AnnotationRecord:
-    pass
+        self.discard_in_favour = discard_in_favour
+        self.field_dict = field_dict
+        self.discard_field_list = discard_field_list
 
 
