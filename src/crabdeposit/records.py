@@ -31,6 +31,8 @@ import pyarrow.compute
 from datetime import datetime
 from .udt import string_udt, binary_udt, small_udt
 
+# last_modified MUST be a Unix timestamp as an int.
+
 class DataRecord:
     def __init__(self, udt, data, last_modified, data_uri=None, bin_udt=None, bin_compact_udt=None, mime_type=None, domain_types=None, numerical_format=None, bit_depth=None, value_domain="magnitude", extents=None, sha256=None):
         self.extents = extents
@@ -120,6 +122,8 @@ class DataRecord:
             return self.raw_data
         else:
             raise RuntimeError("Cloud retrieval unimplemented")
+
+# last_modified MUST be a Unix timestamp as an int.
 
 class AnnotationRecord:
     def __init__(self, udt, last_modified, extents, origin_extents, sha256, uuid = None, annotator = None, annotation_software = None, bin_udt=None, bin_compact_udt=None, discard_in_favour=None, field_dict={}, discard_field_list=[]):

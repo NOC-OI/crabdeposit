@@ -43,6 +43,7 @@ class DepositBuilder:
         self.__annotation_out_uri = "crabannotation.parquet"
         self.__custom_fields = []
         self.__custom_discarded_fields = []
+        self.__dictionary_compression_fields = ["annotator", "annotation_software"]
 
     def set_data_provider(self, iterable):
         self.__data_provider = iterable
@@ -87,6 +88,10 @@ class DepositBuilder:
             self.register_field(field_name, dtype)
         return self
 
+    def flag_field_for_dictionary_compression(self, field_name):
+        self.__dictionary_compression_fields.append("field_" + field_name)
+        return self
+
     def register_discard_field(self, field_name):
         self.__custom_discarded_fields.append(field_name)
         return self
@@ -99,6 +104,8 @@ class DepositBuilder:
 
         data_parquet_writer = None
         annotation_parquet_writer = None
+
+        output_uris = []
 
         try:
             record = next(self.__data_provider)
@@ -124,7 +131,7 @@ class DepositBuilder:
                 ("last_modified", pyarrow.timestamp('s', tz='UTC')),
                 ("extents", pyarrow.list_(pyarrow.uint64())),
             ])
-            data_parquet_writer = pyarrow.parquet.ParquetWriter(self.__data_out_uri, data_schema)
+            data_parquet_writer = pyarrow.parquet.ParquetWriter(self.__data_out_uri, data_schema, use_dictionary=["mime_type", "numerical_format", "domain_types", "value_domain"])
             exhausted = False
 
             while not exhausted:
@@ -199,7 +206,7 @@ class DepositBuilder:
 
             annotation_size_approx_kb = 1
             batch_num = 0
-            annotation_batch_size = int(65536 / data_size_approx_kb) # Targeting batch size of ~ 64mb assuming a per-record size of about 32kb
+            annotation_batch_size = int(65536 / annotation_size_approx_kb) # Targeting batch size of ~ 64mb assuming a per-record size of about 32kb
             #data_batch_size = 256
 
 
@@ -220,7 +227,7 @@ class DepositBuilder:
             for discard_field_def in self.__custom_discarded_fields:
                 pyarrow_fields.append((("discard_field_" + field_def[0]), pyarrow.bool_()))
             annotation_schema = pyarrow.schema(pyarrow_fields)
-            annotation_parquet_writer = pyarrow.parquet.ParquetWriter(self.__annotation_out_uri, annotation_schema)
+            annotation_parquet_writer = pyarrow.parquet.ParquetWriter(self.__annotation_out_uri, annotation_schema, use_dictionary=self.__dictionary_compression_fields)
             exhausted = False
 
             while not exhausted:
@@ -240,7 +247,7 @@ class DepositBuilder:
                 for discard_field_def in self.__custom_discarded_fields:
                     annotation_extra_fields_dict["discard_field_" + discard_field_def] = []
                 try:
-                    for i in range(data_batch_size):
+                    for i in range(annotation_batch_size):
                         if fst_pull:
                             fst_pull = False
                         else:
@@ -302,6 +309,7 @@ class DepositBuilder:
             }
             data_parquet_writer.add_key_value_metadata(data_metadata)
             data_parquet_writer.close()
+            output_uris.append(self.__data_out_uri)
 
         if annotation_parquet_writer is not None:
             annotation_metadata = {
@@ -311,7 +319,8 @@ class DepositBuilder:
             }
             annotation_parquet_writer.add_key_value_metadata(annotation_metadata)
             annotation_parquet_writer.close()
+            output_uris.append(self.__annotation_out_uri)
 
         out_deposit = Deposit()
-        out_deposit.set_deposit_files([self.__data_out_uri, self.__annotation_out_uri])
+        out_deposit.set_deposit_files(output_uris)
         return out_deposit

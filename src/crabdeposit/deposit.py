@@ -149,10 +149,11 @@ class Deposit:
                             for discard_field in pfo_discard_fields:
                                 if matched_record_def["discard_field_" + discard_field]:
                                     discard_field_list.append(discard_field)
+                            extents_it = iter(matched_record_def["extents"])
                             annotation_records.append(AnnotationRecord(
                                     udt = matched_record_def["udt"],
                                     last_modified = matched_record_def["last_modified"],
-                                    extents = matched_record_def["extents"],
+                                    extents = zip(extents_it, extents_it),
                                     origin_extents = matched_record_def["origin_extents"],
                                     sha256 = matched_record_def["sha256"],
                                     uuid = matched_record_def["uuid"],
@@ -187,6 +188,48 @@ class Deposit:
                         if (not full_string_match) or (matched_record_def["udt"].startswith(udt_prefix)): # Optional check for full string match
                             records.append(matched_record_def["udt"])
         return records
+
+    def find_annotation_record_matches(self, field_name, match_value):
+        annotation_records = []
+        full_field_name = "field_" + field_name
+        for pfi in self.__annotation_indicies:
+            pfo = self.__parquet_files[pfi]
+            pfo_fields = []
+            pfo_discard_fields = []
+            if full_field_name in pfo.schema.names:
+                for col_nm in pfo.schema.names:
+                    if col_nm.startswith("field_"):
+                        pfo_fields.append(col_nm[6:])
+                    if col_nm.startswith("discard_field_"):
+                        pfo_discard_fields.append(col_nm[14:])
+                for row_group in range(pfo.num_row_groups):
+                    rgt = pfo.read_row_group(row_group)
+                    filtered_rgt = rgt.filter(pyarrow.compute.equal(rgt[full_field_name], match_value))
+                    filtered_rgt = filtered_rgt.to_pylist(maps_as_pydicts="strict")
+                    for matched_record_def in filtered_rgt:
+                        field_dict = {}
+                        discard_field_list = []
+                        for field in pfo_fields:
+                            field_dict[field] = matched_record_def["field_" + field]
+                        for discard_field in pfo_discard_fields:
+                            if matched_record_def["discard_field_" + discard_field]:
+                                discard_field_list.append(discard_field)
+                        extents_it = iter(matched_record_def["extents"])
+                        annotation_records.append(AnnotationRecord(
+                                udt = matched_record_def["udt"],
+                                last_modified = matched_record_def["last_modified"],
+                                extents = zip(extents_it, extents_it),
+                                origin_extents = matched_record_def["origin_extents"],
+                                sha256 = matched_record_def["sha256"],
+                                uuid = matched_record_def["uuid"],
+                                annotator = matched_record_def["annotator"],
+                                annotation_software = matched_record_def["annotation_software"],
+                                bin_udt = matched_record_def["udt_bin"],
+                                discard_in_favour = matched_record_def["discard_in_favour"],
+                                field_dict = field_dict,
+                                discard_field_list = discard_field_list
+                            ))
+        return annotation_records
 
     def __get_coherence(self):
         return False

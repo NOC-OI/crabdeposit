@@ -2,7 +2,7 @@
 SCRIPT_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
 cd $SCRIPT_DIR
 cd ..
-#bash scripts/get-test-data.sh
+bash scripts/get-test-data.sh
 mkdir -p dist
 mkdir -p testout
 rm dist/*
@@ -11,3 +11,4 @@ python3 -m build
 pip install --force-reinstall --no-deps dist/crabdeposit*.whl
 python3 scripts/test_a.py
 python3 scripts/test_b.py
+python3 scripts/test_c.py
