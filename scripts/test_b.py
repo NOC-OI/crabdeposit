@@ -131,4 +131,5 @@ deposit_builder = DepositBuilder()
 deposit_builder.set_annotation_provider(iter(annotations_to_export))
 deposit_builder.set_annotation_export_uri("testout/D20250530_ecotaxa_annotations.parquet")
 deposit_builder.register_fields(["taxon", "label"], str)
+#deposit_builder.register_fields(["ecotaxa_label_id"], int) # Document this field explicitly, and in detail
 deposit_ecotaxa_annotations = deposit_builder.build()

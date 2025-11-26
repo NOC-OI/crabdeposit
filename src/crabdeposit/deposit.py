@@ -24,6 +24,7 @@ import numpy
 import io
 import struct
 import hashlib
+import itertools
 import uuid
 import pyarrow
 import pyarrow.parquet
@@ -40,10 +41,11 @@ class Deposit:
         self.__annotation_indicies = []
         self.__udt_map = {}
 
-    def set_deposit_files(self, parquet_uris):
+    def set_deposit_files(self, parquet_uris, parquet_filesystems = []):
         self.__parquet_uris = parquet_uris
-        for pfi, parquet_uri in enumerate(self.__parquet_uris):
-            pfo = pyarrow.parquet.ParquetFile(parquet_uri)
+        self.__parquet_filesystems = parquet_filesystems
+        for pfi, parquet_def in enumerate(itertools.zip_longest(self.__parquet_uris, self.__parquet_filesystems)):
+            pfo = pyarrow.parquet.ParquetFile(parquet_def[0], filesystem=parquet_def[1])
 
             pf_udts_str = None
             #print(pfo.metadata.metadata)
