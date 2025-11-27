@@ -19,6 +19,7 @@
 import pyarrow
 import pyarrow.parquet
 import pyarrow.compute
+from .udt import string_udt
 
 class DepositFile:
     def __init__(self, input_file):
@@ -57,6 +58,9 @@ class DepositFile:
     # Get Non Specific Entry (i.e. Without element id) Binary UDTs
     def get_nse_budts(self):
         return self.__budt_list
+
+    def get_nse_udts(self):
+        return [string_udt(self.__budt_list[i]) for i in range(0, len(self.__budt_list))]
 
     def get_metadata_dict(self):
         return self.__custom_metadata_dict

@@ -1,4 +1,4 @@
-from crabdeposit import DepositBuilder, DataRecord, Deposit
+from crabdeposit import DepositBuilder, DataRecord, Deposit, DepositFile
 import json
 from datetime import datetime
 import pytz
@@ -6,6 +6,9 @@ import time
 import cv2
 
 print("==================[ Test C ]==================")
+
+data_deposit_file = DepositFile("testout/D20250530_data.parquet")
+print(data_deposit_file.get_nse_udts())
 
 full_deposit = Deposit()
 full_deposit.set_deposit_files(["testout/D20250530_data.parquet", "testout/D20250530_annotation.parquet", "testout/D20250530_ecotaxa_annotations.parquet"])
