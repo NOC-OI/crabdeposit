@@ -32,42 +32,44 @@ import pyarrow.compute
 from datetime import datetime
 from .udt import string_udt, binary_udt, small_udt
 from .records import DataRecord, AnnotationRecord
+from .deposit_file import DepositFile
+import warnings
 
 class Deposit:
     def __init__(self):
-        self.__parquet_uris = []
         self.__parquet_files = []
+        self.__deposit_file_objects = []
         self.__data_indicies = []
         self.__annotation_indicies = []
         self.__udt_map = {}
 
+    def add_deposit_uri(self, file_uri):
+        self.add_deposit_file(DepositFile(file_uri))
+
+    def add_deposit_file(self, deposit_file):
+        pfi = len(self.__parquet_files)
+
+        if deposit_file.get_type() == "DATA":
+            self.__data_indicies.append(pfi)
+        elif deposit_file.get_type() == "ANNOTATION":
+            self.__annotation_indicies.append(pfi)
+        else:
+            raise RuntimeError("Unrecognised CRAB deposit file")
+
+        self.__parquet_files.append(deposit_file.parquet_file)
+        self.__deposit_file_objects.append(deposit_file)
+
+        for pf_udt in deposit_file.get_nse_budts():
+            if not pf_udt in self.__udt_map.keys():
+                self.__udt_map[pf_udt] = []
+            self.__udt_map[pf_udt].append(pfi)
+
     def set_deposit_files(self, parquet_uris, parquet_filesystems = []):
+        warnings.warn("Use add_deposit_uri() mechanism instead, this function will be removed before release 1.0", DeprecationWarning, stacklevel=2)
         self.__parquet_uris = parquet_uris
         self.__parquet_filesystems = parquet_filesystems
         for pfi, parquet_def in enumerate(itertools.zip_longest(self.__parquet_uris, self.__parquet_filesystems)):
-            pfo = pyarrow.parquet.ParquetFile(parquet_def[0], filesystem=parquet_def[1])
-
-            pf_udts_str = None
-            #print(pfo.metadata.metadata)
-            if pfo.metadata.metadata[b"data_type"] == b"CRAB_DATA_V1":
-                pf_udts_str = pfo.metadata.metadata[b"contains_udts"]
-                self.__data_indicies.append(pfi)
-            elif pfo.metadata.metadata[b"data_type"] == b"CRAB_ANNOTATION_V1":
-                pf_udts_str = pfo.metadata.metadata[b"references_udts"]
-                self.__annotation_indicies.append(pfi)
-            else:
-                raise RuntimeError("Unrecognised CRAB deposit file")
-
-            self.__parquet_files.append(pfo)
-            #print(pfo.metadata.metadata[b"numerical_format"].decode("utf-8"))
-            #self.__parquet_dtypes.append(numpy.dtype(pfo.metadata.metadata[b"numerical_format"].decode("utf-8")))
-
-            if pf_udts_str is not None:
-                pf_udts = [pf_udts_str[i:i+21] for i in range(0, len(pf_udts_str), 21)]
-                for pf_udt in pf_udts:
-                    if not pf_udt in self.__udt_map.keys():
-                        self.__udt_map[pf_udt] = []
-                    self.__udt_map[pf_udt].append(pfi)
+            self.add_deposit_file(DepositFile(pyarrow.parquet.ParquetFile(parquet_def[0], filesystem=parquet_def[1])))
 
     def get_all_compact_udts(self):
         return list(map(string_udt, self.__udt_map.keys()))

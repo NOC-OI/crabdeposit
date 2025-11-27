@@ -18,4 +18,6 @@
 
 from .records import DataRecord, AnnotationRecord
 from .deposit_builder import DepositBuilder
+from .deposit_file import DepositFile
 from .deposit import Deposit
+from .udt import string_udt, binary_udt, small_udt
