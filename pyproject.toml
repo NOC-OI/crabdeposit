@@ -2,7 +2,7 @@
 name = "crabdeposit"
 dynamic = ["version"]
 authors = [
-  { name="Alex Baldwin", email="contact@alexbaldwin.dev" },
+  { name="Hannah Baldwin", email="contact@hannahbaldwin.net" },
 ]
 license = { text="GPL-3.0" }
 description = "A Python library for creating CRAB-compatible data deposits and interacting with CRAB programatically. "
