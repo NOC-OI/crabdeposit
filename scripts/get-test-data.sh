@@ -11,7 +11,7 @@ if [ "$SHAOUT" = "1bfc3f0c25e97627781d20eb476e7fcd9c11ad1fb23b2bb00919de29728751
 else
     echo "Test data hash ($SHAOUT) did not match expected output, redownloading data"
     rm *.adc *.hdr *.roi *.tsv
-    wget -O test-data.zip https://repo.hannahbaldwin.net/test-data/crabdeposit-v1.zip
+    wget -O test-data.zip https://repo.indentationerror.net/test-data/crabdeposit-v1.zip
     unzip test-data.zip
     rm test-data.zip
 fi
